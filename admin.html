@@ -10,8 +10,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; }
         .tab-active { border-bottom: 3px solid #2563eb; color: #2563eb; }
+        .loading-dots:after { content: '.'; animation: dots 1.5s steps(5, end) infinite; }
+        @keyframes dots { 0%, 20% { content: '.'; } 40% { content: '..'; } 60% { content: '...'; } 80%, 100% { content: ''; } }
     </style>
 </head>
 <body>
@@ -21,33 +24,41 @@
         const { useState, useEffect } = React;
 
         function App() {
-            const [isAuth, setIsAuth] = useState(false);
+            // Состояния: null (проверка), false (нужен вход), true (авторизован)
+            const [isAuth, setIsAuth] = useState(null);
             const [activeTab, setActiveTab] = useState('records');
             const [data, setData] = useState([]);
             const [password, setPassword] = useState('');
             const [newDoc, setNewDoc] = useState({ login: '', password: '' });
             const [newPatient, setNewPatient] = useState('');
 
+            // 1. ПРОВЕРКА СЕССИИ (Один раз при загрузке)
             useEffect(() => {
-                if (isAuth) {
+                fetch('/api/records')
+                    .then(res => {
+                        if (res.ok) setIsAuth(true);
+                        else setIsAuth(false);
+                    })
+                    .catch(() => setIsAuth(false));
+            }, []);
+
+            // 2. ЗАГРУЗКА ДАННЫХ (При смене вкладки или авторизации)
+            useEffect(() => {
+                if (isAuth === true) {
                     loadData(activeTab);
-                } else {
-                    // Проверка существующей сессии при загрузке
-                    fetch('/api/records').then(res => {
-                        if (res.ok) {
-                            setIsAuth(true);
-                            loadData('records');
-                        }
-                    });
                 }
             }, [activeTab, isAuth]);
 
             const loadData = async (tab) => {
                 try {
                     const res = await fetch(`/api/${tab}`);
-                    if (res.ok) setData(await res.json());
-                    else if (res.status === 401) setIsAuth(false);
-                } catch (e) { console.error(e); }
+                    if (res.ok) {
+                        const json = await res.json();
+                        setData(json);
+                    } else if (res.status === 401) {
+                        setIsAuth(false);
+                    }
+                } catch (e) { console.error("Ошибка загрузки данных", e); }
             };
 
             const handleLogin = async (e) => {
@@ -57,35 +68,63 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ password })
                 });
-                if (res.ok) setIsAuth(true);
-                else alert('Неверный пароль');
+                if (res.ok) {
+                    setIsAuth(true);
+                } else {
+                    alert('Неверный мастер-пароль');
+                }
+            };
+
+            const handleLogout = async () => {
+                // Если у вас есть эндпоинт для выхода, вызываем его
+                await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+                setIsAuth(false);
+                setData([]);
             };
 
             const addDoctor = async () => {
-                if(!/^[a-z]\.[a-z]\.[a-z]+$/.test(newDoc.login)) {
-                    alert('Логин должен быть i.i.ivanov');
+                if(!/^[a-z0-9.]+$/.test(newDoc.login)) {
+                    alert('Логин должен содержать только строчные буквы, цифры или точки');
                     return;
                 }
-                await fetch('/api/doctors', {
+                const res = await fetch('/api/doctors', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(newDoc)
                 });
-                setNewDoc({ login: '', password: '' });
-                loadData('doctors');
+                if(res.ok) {
+                    setNewDoc({ login: '', password: '' });
+                    loadData('doctors');
+                } else {
+                    alert('Ошибка: возможно логин уже занят');
+                }
             };
 
             const addPatient = async () => {
-                await fetch('/api/patients', {
+                const res = await fetch('/api/patients', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ policy: newPatient })
+                    body: JSON.stringify({ policy: newPatient.trim() })
                 });
-                setNewPatient('');
-                loadData('patients');
+                if(res.ok) {
+                    setNewPatient('');
+                    loadData('patients');
+                } else {
+                    alert('Ошибка добавления пациента');
+                }
             };
 
-            if (!isAuth) return (
+            // ЭКРАН 1: ЗАГРУЗКА (убирает мигание)
+            if (isAuth === null) return (
+                <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                    <div className="text-slate-400 font-bold tracking-widest uppercase text-xs">
+                        Проверка доступа<span className="loading-dots"></span>
+                    </div>
+                </div>
+            );
+
+            // ЭКРАН 2: ФОРМА ВХОДА
+            if (isAuth === false) return (
                 <div className="min-h-screen flex items-center justify-center bg-slate-100">
                     <form onSubmit={handleLogin} className="bg-white p-10 rounded-3xl shadow-2xl w-96 border border-slate-200 text-center">
                         <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg">
@@ -99,6 +138,7 @@
                             value={password}
                             onChange={e => setPassword(e.target.value)}
                             autoFocus
+                            required
                         />
                         <button className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-bold text-lg transition-all shadow-lg shadow-blue-100">
                             Войти в панель
@@ -107,6 +147,7 @@
                 </div>
             );
 
+            // ЭКРАН 3: ОСНОВНАЯ ПАНЕЛЬ
             return (
                 <div className="max-w-6xl mx-auto p-6 md:p-12">
                     <div className="flex justify-between items-center mb-10">
@@ -117,9 +158,10 @@
                             <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Professional Database Management</p>
                         </div>
                         <button 
-                            onClick={async () => { await fetch('/api/logout', {method:'POST'}); setIsAuth(false); }} 
+                            onClick={handleLogout} 
                             className="bg-red-50 text-red-500 px-6 py-2 rounded-xl font-bold hover:bg-red-100 transition-all"
                         >
+                            <i className="fa-solid fa-arrow-right-from-bracket mr-2"></i>
                             Выйти
                         </button>
                     </div>
@@ -136,9 +178,10 @@
                         </button>
                     </div>
 
+                    {/* ТАБЛИЦА РАСЧЕТОВ */}
                     {activeTab === 'records' && (
                         <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden border border-slate-100">
-                            <table className="w-full text-left">
+                            <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-50 text-slate-400 font-bold text-[10px] uppercase tracking-widest border-b">
                                     <tr>
                                         <th className="p-6">Дата и время</th>
@@ -152,7 +195,7 @@
                                     {data.map(r => (
                                         <tr key={r.id} className="hover:bg-blue-50/30 transition-all">
                                             <td className="p-6 text-slate-400 font-medium">
-                                                {new Date(r.timestamp).toLocaleString()}
+                                                {r.timestamp ? new Date(r.timestamp).toLocaleString() : '—'}
                                             </td>
                                             <td className="p-6 font-black text-slate-800">{r.calcId}</td>
                                             <td className="p-6">
@@ -171,17 +214,20 @@
                                     ))}
                                 </tbody>
                             </table>
-                            {data.length === 0 && <div className="p-20 text-center font-bold text-slate-300 italic">База пуста</div>}
+                            {data.length === 0 && <div className="p-20 text-center font-bold text-slate-300 italic">База расчетов пуста</div>}
                         </div>
                     )}
 
+                    {/* УПРАВЛЕНИЕ ВРАЧАМИ */}
                     {activeTab === 'doctors' && (
                         <div className="grid md:grid-cols-3 gap-10">
                             <div className="bg-white p-8 rounded-3xl shadow-lg border border-slate-100 h-fit">
                                 <h3 className="font-black text-slate-800 mb-6 uppercase text-sm tracking-widest">Новый профиль</h3>
-                                <input placeholder="i.i.ivanov" className="w-full border-2 border-slate-50 p-3 rounded-xl mb-3 outline-none focus:border-blue-400 text-sm font-bold" value={newDoc.login} onChange={e => setNewDoc({...newDoc, login: e.target.value})} />
-                                <input placeholder="Пароль" type="password" className="w-full border-2 border-slate-50 p-3 rounded-xl mb-6 outline-none focus:border-blue-400 text-sm font-bold" value={newDoc.password} onChange={e => setNewDoc({...newDoc, password: e.target.value})} />
-                                <button onClick={addDoctor} className="w-full bg-slate-900 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-blue-600 transition-all">Создать</button>
+                                <div className="space-y-4">
+                                    <input placeholder="i.i.ivanov" className="w-full border-2 border-slate-50 p-3 rounded-xl outline-none focus:border-blue-400 text-sm font-bold" value={newDoc.login} onChange={e => setNewDoc({...newDoc, login: e.target.value.toLowerCase()})} />
+                                    <input placeholder="Пароль" type="password" className="w-full border-2 border-slate-50 p-3 rounded-xl outline-none focus:border-blue-400 text-sm font-bold" value={newDoc.password} onChange={e => setNewDoc({...newDoc, password: e.target.value})} />
+                                    <button onClick={addDoctor} className="w-full bg-slate-900 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-blue-600 transition-all">Создать врача</button>
+                                </div>
                             </div>
                             <div className="md:col-span-2 space-y-3">
                                 {data.map(d => (
@@ -190,7 +236,7 @@
                                             <i className="fa-solid fa-circle-user mr-3 text-blue-200 group-hover:text-blue-500 transition-all"></i>
                                             {d.login}
                                         </span>
-                                        <button onClick={async () => { if(confirm('Удалить?')) { await fetch(`/api/doctors/${d.login}`, {method:'DELETE'}); loadData('doctors'); } }} className="text-slate-200 hover:text-red-500 transition-all p-2">
+                                        <button onClick={async () => { if(confirm(`Удалить врача ${d.login}?`)) { await fetch(`/api/doctors/${d.login}`, {method:'DELETE'}); loadData('doctors'); } }} className="text-slate-200 hover:text-red-500 transition-all p-2">
                                             <i className="fa-solid fa-trash-can"></i>
                                         </button>
                                     </div>
@@ -199,18 +245,21 @@
                         </div>
                     )}
 
+                    {/* УПРАВЛЕНИЕ ПАЦИЕНТАМИ */}
                     {activeTab === 'patients' && (
                         <div className="grid md:grid-cols-3 gap-10">
                             <div className="bg-white p-8 rounded-3xl shadow-lg border border-slate-100 h-fit">
                                 <h3 className="font-black text-slate-800 mb-6 uppercase text-sm tracking-widest">Регистрация полиса</h3>
                                 <input placeholder="0000 0000 0000 0000" className="w-full border-2 border-slate-50 p-3 rounded-xl mb-6 outline-none focus:border-blue-400 font-mono font-bold" value={newPatient} onChange={e => setNewPatient(e.target.value)} />
-                                <button onClick={addPatient} className="w-full bg-blue-600 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-900 transition-all">Добавить</button>
+                                <button onClick={addPatient} className="w-full bg-blue-600 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-900 transition-all">Добавить в базу</button>
                             </div>
-                            <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {data.map(p => (
-                                    <div key={p.policy} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm font-mono font-bold text-slate-500 flex items-center">
-                                        <div className="w-2 h-2 rounded-full bg-green-400 mr-4"></div>
-                                        {p.policy}
+                                    <div key={p.policy} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm font-mono font-bold text-slate-500 flex items-center justify-between">
+                                        <div className="flex items-center">
+                                            <div className="w-2 h-2 rounded-full bg-green-400 mr-4"></div>
+                                            {p.policy}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
