@@ -33,6 +33,14 @@ db.serialize(() => {
     id TEXT PRIMARY KEY, calcId TEXT, timestamp TEXT, inputJson TEXT, 
     resultValue REAL, resultText TEXT, doctorLogin TEXT, patientPolicy TEXT
   )`);
+
+  db.run(
+    "INSERT OR IGNORE INTO doctors (login, password) VALUES (?, ?)",
+    ["i.i.ivanov", "12345"], 
+    (err) => {
+        if (!err) console.log("Проверочный врач 'ivanov' готов (пароль 123)");
+    }
+  );
 });
 
 // Проверка авторизации для веб-админки
