@@ -36,9 +36,9 @@ db.serialize(() => {
 
   db.run(
     "INSERT OR IGNORE INTO doctors (login, password) VALUES (?, ?)",
-    ["i.i.ivanov", "12345"], 
+    ["i.i.ivanov", "12345"],
     (err) => {
-        if (!err) console.log("Врач i.i.ivanov готов");
+      if (!err) console.log("Врач i.i.ivanov готов");
     }
   );
 });
@@ -166,7 +166,7 @@ app.post("/api/patients", checkAuth, (req, res) => {
 });
 
 app.post("/api/records/save-with-policy", (req, res) => {
-  const {
+  let {
     id,
     calcId,
     timestamp,
@@ -177,40 +177,44 @@ app.post("/api/records/save-with-policy", (req, res) => {
     patientPolicy,
   } = req.body;
 
-  // 1. Пытаемся добавить пациента. Если он есть — ничего не делаем (OR IGNORE)
-  db.run(
-    "INSERT OR IGNORE INTO patients (policy) VALUES (?)",
-    [patientPolicy],
-    (err) => {
-      if (err)
-        return res.status(500).json({ error: "Ошибка при работе с пациентом" });
+  patientPolicy = patientPolicy ? patientPolicy.toString().trim() : null;
+  doctorLogin = doctorLogin ? doctorLogin.toString().trim() : "unknown";
 
-      // 2. Сохраняем саму запись расчета
-      db.run(
-        "INSERT INTO records (id, calcId, timestamp, inputJson, resultValue, resultText, doctorLogin, patientPolicy) VALUES (?,?,?,?,?,?,?,?)",
-        [
-          id,
-          calcId,
-          timestamp,
-          inputJson,
-          resultValue,
-          resultText,
-          doctorLogin,
-          patientPolicy,
-        ],
-        function (err) {
-          if (err)
-            return res
-              .status(500)
-              .json({ error: "Ошибка при сохранении расчета" });
-          res.json({ success: true, recordId: id });
+  console.log(`>>> Сохранение: Пациент=${patientPolicy}, Врач=${doctorLogin}`);
+
+  if (!patientPolicy || !id) {
+    return res.status(400).json({ error: "Полис или ID расчета отсутствует" });
+  }
+
+  db.serialize(() => {
+    db.run("INSERT OR IGNORE INTO patients (policy) VALUES (?)", [
+      patientPolicy,
+    ]);
+
+    db.run(
+      "INSERT INTO records (id, calcId, timestamp, inputJson, resultValue, resultText, doctorLogin, patientPolicy) VALUES (?,?,?,?,?,?,?,?)",
+      [
+        id,
+        calcId,
+        timestamp,
+        typeof inputJson === "string" ? inputJson : JSON.stringify(inputJson),
+        resultValue,
+        resultText,
+        doctorLogin,
+        patientPolicy,
+      ],
+      function (err) {
+        if (err) {
+          console.error("Ошибка записи в БД:", err.message);
+          return res
+            .status(500)
+            .json({ error: "Ошибка при сохранении в базу данных" });
         }
-      );
-    }
-  );
+        res.json({ success: true, recordId: id });
+      }
+    );
+  });
 });
-
-// --- БЛОК 4: ВНЕШНИЕ СЕРВИСЫ (PubMed прокси) ---
 
 app.get("/api/pubmed", async (req, res) => {
   try {
