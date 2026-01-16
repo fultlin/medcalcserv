@@ -38,7 +38,7 @@ db.serialize(() => {
     "INSERT OR IGNORE INTO doctors (login, password) VALUES (?, ?)",
     ["i.i.ivanov", "12345"], 
     (err) => {
-        if (!err) console.log("Проверочный врач 'ivanov' готов (пароль 123)");
+        if (!err) console.log("Врач i.i.ivanov готов");
     }
   );
 });
