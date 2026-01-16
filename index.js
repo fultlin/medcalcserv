@@ -165,8 +165,9 @@ app.post("/api/patients", checkAuth, (req, res) => {
   );
 });
 
+// --- РОУТ: СОХРАНЕНИЕ РАСЧЕТА С ПОЛИСОМ ---
 app.post("/api/records/save-with-policy", (req, res) => {
-  let {
+  const {
     id,
     calcId,
     timestamp,
@@ -177,44 +178,51 @@ app.post("/api/records/save-with-policy", (req, res) => {
     patientPolicy,
   } = req.body;
 
-  patientPolicy = patientPolicy ? patientPolicy.toString().trim() : null;
-  doctorLogin = doctorLogin ? doctorLogin.toString().trim() : "unknown";
+  // Логируем входящие данные для отладки в Render
+  console.log(`>>> Запрос на сохранение: ID=${id}, Полис=${patientPolicy}, Врач=${doctorLogin}`);
 
-  console.log(`>>> Сохранение: Пациент=${patientPolicy}, Врач=${doctorLogin}`);
-
-  if (!patientPolicy || !id) {
-    return res.status(400).json({ error: "Полис или ID расчета отсутствует" });
+  // Проверка обязательных полей
+  if (!id || !patientPolicy) {
+    console.error("!!! Ошибка: ID или Полис отсутствуют в запросе");
+    return res.status(400).json({ error: "ID или Полис отсутствуют" });
   }
 
   db.serialize(() => {
-    db.run("INSERT OR IGNORE INTO patients (policy) VALUES (?)", [
-      patientPolicy,
-    ]);
-
+    // 1. Пациенты: INSERT OR IGNORE 
+    // Если полис уже есть в таблице, SQLite просто пропустит этот шаг. Дубликатов не будет.
     db.run(
-      "INSERT INTO records (id, calcId, timestamp, inputJson, resultValue, resultText, doctorLogin, patientPolicy) VALUES (?,?,?,?,?,?,?,?)",
-      [
-        id,
-        calcId,
-        timestamp,
-        typeof inputJson === "string" ? inputJson : JSON.stringify(inputJson),
-        resultValue,
-        resultText,
-        doctorLogin,
-        patientPolicy,
-      ],
-      function (err) {
-        if (err) {
-          console.error("Ошибка записи в БД:", err.message);
-          return res
-            .status(500)
-            .json({ error: "Ошибка при сохранении в базу данных" });
-        }
-        res.json({ success: true, recordId: id });
-      }
+      "INSERT OR IGNORE INTO patients (policy) VALUES (?)",
+      [patientPolicy.toString().trim()]
     );
+
+    // 2. Записи: INSERT OR REPLACE
+    // Если ID совпадет, он перезапишет старую запись. Если ID новый — создаст новую.
+    // Это гарантирует отсутствие ошибки 500 при конфликте ключей.
+    const sql = `INSERT OR REPLACE INTO records 
+      (id, calcId, timestamp, inputJson, resultValue, resultText, doctorLogin, patientPolicy) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    const values = [
+      id,
+      calcId,
+      timestamp,
+      typeof inputJson === 'string' ? inputJson : JSON.stringify(inputJson),
+      resultValue,
+      resultText,
+      doctorLogin || 'unknown',
+      patientPolicy.toString().trim()
+    ];
+
+    db.run(sql, values, function (err) {
+      if (err) {
+        console.error("!!! ОШИБКА SQLITE:", err.message);
+        return res.status(500).json({ error: "Ошибка базы данных: " + err.message });
+      }
+      console.log(`+++ Успешно сохранено: RecordID=${id}`);
+      res.json({ success: true, recordId: id });
+    });
   });
-});
+});;
 
 app.get("/api/pubmed", async (req, res) => {
   try {
